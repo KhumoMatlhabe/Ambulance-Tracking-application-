@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ambulance Dispatch & Tracking Dashboard</title>
+  
+  <!-- 1. Tailwind CSS for UI styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- 2. Leaflet CSS & JS for interactive OpenStreetMap rendering -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+  
+  <!-- 3. Socket.io Client Script (served directly by Node server) -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    // Populate user profile info in header
+    if (currentUser) {
+      document.getElementById('user-display').innerText = `👤 Dispatcher: ${currentUser.fullName}`;
+    }
+  </script>
+
+</head>
+<body class="bg-slate-900 text-white flex flex-col h-screen font-sans">
+
+  <!-- Header Banner -->
+  <header class="bg-red-600 px-6 py-4 flex justify-between items-center shadow-lg z-10">
+    <div class="flex items-center space-x-3">
+      <span class="text-2xl">🚑</span>
+      <h1 class="text-xl font-bold tracking-wide">Emergency Fleet & Dispatch Tracker</h1>
+    </div>
+    <div id="connection-status" class="text-xs font-semibold bg-red-800 px-3 py-1 rounded-full border border-red-500">
+      Connecting to server...
+    </div>
+  </header>
+
+  <!-- Main Content Layout -->
+  <div class="flex flex-1 overflow-hidden relative">
+    
+    <!-- Sidebar: Fleet List & Simulator -->
+    <aside class="w-80 bg-slate-800 p-5 flex flex-col border-r border-slate-700 shadow-xl overflow-y-auto">
+      
+      <!-- Test Movement Button -->
+      <section class="mb-6">
+        <h2 class="text-sm font-semibold uppercase text-slate-400 tracking-wider mb-2">Simulation Tools</h2>
+        <button onclick="simulateAmbulanceGPS()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-lg transition duration-200 shadow">
+          📡 Send Simulated GPS Update
+        </button>
+      </section>
+
+      <hr class="border-slate-700 mb-6" />
+
+      <!-- Active Fleet Telemetry Section -->
+      <section class="flex-1">
+        <h2 class="text-sm font-semibold uppercase text-slate-400 tracking-wider mb-3">Live Active Units</h2>
+        <div id="fleet-list" class="space-y-3">
+          <p class="text-slate-500 text-sm italic">Waiting for incoming telemetry signals...</p>
+        </div>
+      </section>
+      
+    </aside>
+
+    <!-- Map Canvas Container -->
+    <main id="map" class="flex-1 h-full w-full bg-slate-950"></main>
+
+  </div>
+
+  <!-- Real-Time Client Application Logic -->
+  <script>
+    // 1. Establish Socket connection with server
+    const socket = io();
+    const statusEl = document.getElementById('connection-status');
+    const fleetListEl = document.getElementById('fleet-list');
+
+    // 2. Initialize Leaflet Map centered on default location
+    const defaultCoords = [-33.9249, 18.4241]; // Cape Town default coordinates
+    const map = L.map('map').setView(defaultCoords, 13);
+
+    // Render free tile layer from OpenStreetMap
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Map marker storage map
+    const markers = {};
+
+    // 3. Socket Connection Lifecycle Handlers
+    socket.on('connect', () => {
+      statusEl.innerText = "● System Live";
+      statusEl.className = "text-xs font-semibold bg-emerald-900 text-emerald-300 px-3 py-1 rounded-full border border-emerald-500";
+    });
+
+    socket.on('disconnect', () => {
+      statusEl.innerText = "○ Disconnected";
+      statusEl.className = "text-xs font-semibold bg-red-900 text-red-300 px-3 py-1 rounded-full border border-red-500";
+    });
+
+    // 4. Handle initial fleet payload when opening dashboard
+    socket.on('initial_fleet_state', (fleetArray) => {
+      fleetArray.forEach(unit => updateOrAddMarker(unit));
+    });
+
+    // 5. Handle real-time telemetry updates broadcast from server
+    socket.on('location_changed', (unit) => {
+      updateOrAddMarker(unit);
+    });
+
+    // Function to add or update marker & sidebar card
+    function updateOrAddMarker(unit) {
+      const { unitId, lat, lng, status, updatedAt } = unit;
+
+      // Update or Create Leaflet Marker
+      if (markers[unitId]) {
+        markers[unitId].setLatLng([lat, lng]);
+      } else {
+        markers[unitId] = L.marker([lat, lng])
+          .addTo(map)
+          .bindPopup(`<b>${unitId}</b><br/>Status: ${status}`);
+      }
+
+      // Smoothly focus map view on active unit coordinate
+      map.panTo([lat, lng]);
+
+      // Render update into Sidebar Card UI
+      let card = document.getElementById(`unit-card-${unitId}`);
+      if (!card) {
+        // Remove empty state message if present
+        if (fleetListEl.querySelector('p')) fleetListEl.innerHTML = '';
+
+        card = document.createElement('div');
+        card.id = `unit-card-${unitId}`;
+        card.className = "bg-slate-700/50 p-3 rounded-lg border border-slate-600 text-xs space-y-1";
+        fleetListEl.appendChild(card);
+      }
+
+      card.innerHTML = `
+        <div class="flex justify-between items-center">
+          <span class="font-bold text-sm text-white">${unitId}</span>
+          <span class="bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-semibold text-[10px] uppercase">${status}</span>
+        </div>
+        <p class="text-slate-300">Latitude: <span class="font-mono text-white">${lat.toFixed(4)}</span></p>
+        <p class="text-slate-300">Longitude: <span class="font-mono text-white">${lng.toFixed(4)}</span></p>
+        <p class="text-slate-500 text-[10px]">Last signal: ${updatedAt || 'Just now'}</p>
+      `;
+    }
+
+    // 6. Test simulation helper
+    let currentLat = -33.9249;
+    let currentLng = 18.4241;
+
+    function simulateAmbulanceGPS() {
+      currentLat += 0.0015; // Move unit incrementally
+      currentLng += 0.0015;
+
+      socket.emit('update_location', {
+        unitId: 'Ambulance-01',
+        lat: currentLat,
+        lng: currentLng,
+        status: 'EN_ROUTE'
+      });
+    }
+    socket.on('new_incident_alert', (incident) => {
+  // 1. Play alert or log incident details
+  console.warn("New Emergency Received:", incident);
+
+  // 2. Add an Incident Marker on the Dispatcher Map (Red Marker)
+  const incidentMarker = L.circleMarker([incident.lat, incident.lng], {
+    color: '#ef4444',
+    fillColor: '#f87171',
+    fillOpacity: 0.8,
+    radius: 12
+  }).addTo(map);
+
+  incidentMarker.bindPopup(`
+    <div class="text-slate-900 font-sans p-1">
+      <h3 class="font-bold text-red-600">🚨 EMERGENCY REQUEST</h3>
+      <p><b>ID:</b> ${incident.incidentId}</p>
+      <p><b>Patient:</b> ${incident.patientName}</p>
+      <p><b>Phone:</b> ${incident.phone}</p>
+      <p><b>Notes:</b> ${incident.notes}</p>
+      <p class="text-xs text-gray-500 mt-1">${incident.timestamp}</p>
+    </div>
+  `).openPopup();
+
+  // 3. Pan dispatcher map directly to patient incident location
+  map.setView([incident.lat, incident.lng], 15);
+});
+
+async function updateIncidentStatus(incidentId, newStatus) {
+  try {
+    const response = await fetch(`/api/incidents/${incidentId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        status: newStatus,
+        assignedUnit: 'Ambulance-01' // Example assigned unit
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Failed to update');
+
+    console.log(`Successfully set ${incidentId} to ${newStatus}`);
+  } catch (err) {
+    alert(`Error updating incident: ${err.message}`);
+  }
+}
+
+// 2. Listen for real-time WebSocket updates to adjust UI badge colors
+socket.on('incident_status_updated', (data) => {
+  const badgeEl = document.getElementById(`badge-${data.incidentId}`);
+  if (badgeEl) {
+    badgeEl.innerText = data.status;
+    
+    if (data.status === 'DISPATCHED') {
+      badgeEl.className = 'text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-300';
+    } else if (data.status === 'RESOLVED') {
+      badgeEl.className = 'text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300';
+    }
+  }
+});
+// Handle emergency SOS requests from patients
+  socket.on('emergency_request', (data) => {
+    const incidentCode = `INC-${Date.now().toString().slice(-4)}`;
+    const timestamp = new Date().toLocaleTimeString();
+
+    // Find the nearest available unit in real time
+    const suggestedUnit = findClosestAvailableAmbulance(data.lat, data.lng, activeAmbulances);
+
+    const incidentData = {
+      incidentId: incidentCode,
+      patientName: data.name || 'Anonymous',
+      phone: data.phone || 'Unspecified',
+      notes: data.notes || 'None',
+      lat: data.lat,
+      lng: data.lng,
+      status: 'PENDING',
+      timestamp: timestamp,
+      // Suggested nearest vehicle telemetry
+      suggestedUnit: suggestedUnit ? suggestedUnit.unitId : 'None Available',
+      distanceKm: suggestedUnit ? suggestedUnit.distanceKm : null,
+      etaMins: suggestedUnit ? suggestedUnit.estimatedEtaMins : null
+    };
+
+    console.log(`[🚨] EMERGENCY SOS: ${incidentData.patientName} | Nearest Unit: ${incidentData.suggestedUnit} (${incidentData.distanceKm} km away)`);
+
+    // 1. Broadcast incident with auto-suggestion to dispatchers
+    io.emit('new_incident_alert', incidentData);
+
+    // 2. Persist to SQLite Database
+    const sql = `
+      INSERT INTO incidents (incident_id, patient_name, phone, notes, latitude, longitude, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
+    `;
+    db.run(
+      sql,
+      [incidentData.incidentId, incidentData.patientName, incidentData.phone, incidentData.notes, data.lat, data.lng],
+      function (err) {
+        if (err) console.error('❌ Failed to insert incident into SQLite:', err.message);
+      }
+    );
+  });
+
+  </script>
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Emergency Portal - Authentication</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- ========================================================================= -->
+  <!-- AUTO-REDIRECT GUARD FOR ALREADY AUTHENTICATED USERS                       -->
+  <!-- ========================================================================= -->
+  <script>
+    (function checkExistingSession() {
+      const token = localStorage.getItem('auth_token');
+      const userInfoRaw = localStorage.getItem('user_info');
+
+      if (token && userInfoRaw) {
+        try {
+          // Decode JWT token payload to check if it's expired
+          const base64Url = token.split('.')[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const jsonPayload = decodeURIComponent(
+            atob(base64)
+              .split('')
+              .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+              .join('')
+          );
+          const jwtPayload = JSON.parse(jsonPayload);
+
+          const currentTime = Math.floor(Date.now() / 1000);
+
+          // If token is still valid (not expired)
+          if (jwtPayload.exp && jwtPayload.exp > currentTime) {
+            const user = JSON.parse(userInfoRaw);
+
+            // Redirect automatically based on the user's assigned role
+            if (user.role === 'DISPATCHER') {
+              window.location.replace('/');
+            } else if (user.role === 'DRIVER') {
+              window.location.replace('/driver.html');
+            } else {
+              window.location.replace('/patient.html');
+            }
+          } else {
+            // Token expired: clear old storage items
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('user_info');
+          }
+        } catch (err) {
+          console.error("Invalid stored session data:", err);
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user_info');
+        }
+      }
+    })();
+  </script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex items-center justify-center p-4 font-sans">
+
+  <div class="max-w-md w-full bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-2xl space-y-6">
+    
+    <!-- Title -->
+    <div class="text-center space-y-1">
+      <span class="text-4xl">🚑</span>
+      <h1 class="text-2xl font-bold tracking-wide">Emergency System Portal</h1>
+      <p class="text-slate-400 text-xs">Sign in or register to access the platform</p>
+    </div>
+
+    <!-- Mode Selector Tabs -->
+    <div class="flex border-b border-slate-700 text-sm font-semibold">
+      <button id="tab-login" type="button" onclick="switchMode('login')" class="flex-1 py-2 text-red-500 border-b-2 border-red-500 font-bold">
+        Login
+      </button>
+      <button id="tab-register" type="button" onclick="switchMode('register')" class="flex-1 py-2 text-slate-400 hover:text-white">
+        Register
+      </button>
+    </div>
+
+    <!-- Error Alert Box -->
+    <div id="error-alert" class="hidden p-3 bg-red-900/60 border border-red-500 text-red-200 rounded-lg text-xs"></div>
+
+    <!-- Auth Form -->
+    <form id="auth-form" onsubmit="handleAuthSubmit(event)" class="space-y-4">
+      
+      <!-- Registration-Only Field: Full Name -->
+      <div id="field-name" class="hidden">
+        <label class="block text-xs uppercase font-bold text-slate-400 mb-1">Full Name</label>
+        <input type="text" id="full-name" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:border-red-500" />
+      </div>
+
+      <!-- Email Field -->
+      <div>
+        <label class="block text-xs uppercase font-bold text-slate-400 mb-1">Email Address</label>
+        <input type="email" id="email" required class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:border-red-500" />
+      </div>
+
+      <!-- Password Field -->
+      <div>
+        <label class="block text-xs uppercase font-bold text-slate-400 mb-1">Password</label>
+        <input type="password" id="password" required class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:border-red-500" />
+      </div>
+
+      <!-- Registration-Only Field: Role Selector -->
+      <div id="field-role" class="hidden">
+        <label class="block text-xs uppercase font-bold text-slate-400 mb-1">Account Role</label>
+        <select id="role" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:border-red-500">
+          <option value="PATIENT">Citizen / Patient</option>
+          <option value="DRIVER">Ambulance Paramedic / Driver</option>
+          <option value="DISPATCHER">Emergency Control Dispatcher</option>
+        </select>
+      </div>
+
+      <button type="submit" id="submit-btn" class="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-lg transition duration-200 shadow-lg">
+        Sign In
+      </button>
+    </form>
+  </div>
+
+  <script>
+    let mode = 'login';
+
+    function switchMode(newMode) {
+      mode = newMode;
+      const errorEl = document.getElementById('error-alert');
+      errorEl.classList.add('hidden');
+
+      if (mode === 'register') {
+        document.getElementById('tab-register').className = "flex-1 py-2 text-red-500 border-b-2 border-red-500 font-bold";
+        document.getElementById('tab-login').className = "flex-1 py-2 text-slate-400 hover:text-white";
+        document.getElementById('field-name').classList.remove('hidden');
+        document.getElementById('field-role').classList.remove('hidden');
+        document.getElementById('submit-btn').innerText = "Create Account";
+      } else {
+        document.getElementById('tab-login').className = "flex-1 py-2 text-red-500 border-b-2 border-red-500 font-bold";
+        document.getElementById('tab-register').className = "flex-1 py-2 text-slate-400 hover:text-white";
+        document.getElementById('field-name').classList.add('hidden');
+        document.getElementById('field-role').classList.add('hidden');
+        document.getElementById('submit-btn').innerText = "Sign In";
+      }
+    }
+
+    async function handleAuthSubmit(e) {
+      e.preventDefault();
+      const errorEl = document.getElementById('error-alert');
+      errorEl.classList.add('hidden');
+
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const endpoint = mode === 'register' ? '/api/auth/register' : '/api/auth/login';
+
+      const payload = { email, password };
+      if (mode === 'register') {
+        payload.fullName = document.getElementById('full-name').value;
+        payload.role = document.getElementById('role').value;
+      }
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(payload)
+        });
+
+const contentType = response.headers.get('content-type');
+    let data;
+
+    if (contentType && contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      // Server returned plain text (e.g., "Forbidden.")
+      const rawText = await response.text();
+      throw new Error(`Server Error (${response.status}): ${rawText}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Authentication failed');
+    }
+
+    // Save token & redirect on success
+    localStorage.setItem('auth_token', data.token);
+    localStorage.setItem('user_info', JSON.stringify(data.user));
+    window.location.replace('/');
+
+  } catch (err) {
+    errorEl.innerText = err.message;
+    errorEl.classList.remove('hidden');
+  }
+}
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Authentication failed');
+
+        // Store token and user details in local storage
+        localStorage.setItem('auth_token', data.token);
+        localStorage.setItem('user_info', JSON.stringify(data.user));
+
+        // Redirect based on role using replace() to prevent history loop
+        if (data.user.role === 'DISPATCHER') {
+          window.location.replace('/');
+        } else if (data.user.role === 'DRIVER') {
+          window.location.replace('/driver.html');
+        } else {
+          window.location.replace('/patient.html');
+        }
+
+      
+    
+  </script>
+</body>
+</html>

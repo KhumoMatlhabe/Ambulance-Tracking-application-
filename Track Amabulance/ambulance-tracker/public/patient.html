@@ -42,6 +42,12 @@
         <textarea id="medical-notes" placeholder="Medical Notes / Allergies / Symptoms" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm h-20 focus:outline-none focus:border-red-500"></textarea>
       </div>
 
+      <!-- Nearby Active Units Counter -->
+      <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-700 flex justify-between items-center text-xs">
+        <span class="text-slate-400">Available Ambulances:</span>
+        <span id="available-count" class="font-bold text-emerald-400">0 Active</span>
+      </div>
+
       <!-- Tracking Info Card -->
       <div id="tracker-card" class="hidden bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-sm">
         <div class="flex justify-between items-center border-b border-slate-800 pb-2">
@@ -62,7 +68,15 @@
   <script>
     const socket = io();
     let patientMarker = null;
-    let ambulanceMarker = null;
+    const ambulanceMarkers = {}; // Stores all available ambulance markers by ID
+
+    // Distinct SVG ambulance icon for map visual clarity
+    const ambulanceIcon = L.divIcon({
+      html: `<div style="font-size: 24px;">🚑</div>`,
+      className: 'custom-ambulance-icon',
+      iconSize: [30, 30],
+      iconAnchor: [15, 15]
+    });
 
     // Initialize map
     const map = L.map('map').setView([-33.9249, 18.4241], 13);
@@ -70,6 +84,14 @@
       maxZoom: 19,
       attribution: '© OpenStreetMap'
     }).addTo(map);
+
+    // Get patient location on page load to center the map immediately
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition((position) => {
+        const { latitude, longitude } = position.coords;
+        map.setView([latitude, longitude], 13);
+      });
+    }
 
     function requestAmbulance() {
       if (!('geolocation' in navigator)) {
@@ -85,7 +107,7 @@
           // Update Patient Marker on map
           if (patientMarker) map.removeLayer(patientMarker);
           patientMarker = L.marker([lat, lng]).addTo(map)
-            .bindPopup('<b>Your Location</b>').openPopup();
+            .bindPopup('<b>Your Emergency Location</b>').openPopup();
 
           map.setView([lat, lng], 14);
 
@@ -109,18 +131,53 @@
       );
     }
 
-    // Listen for live ambulance updates
-    socket.on('location_changed', (unit) => {
-      document.getElementById('assigned-unit').innerText = unit.unitId;
-      document.getElementById('unit-status').innerText = unit.status;
+    // 1. Listen for initial array of active units when connecting
+    socket.on('available_units', (units) => {
+      units.forEach(unit => updateAmbulanceMarker(unit));
+      updateUnitCounter();
+    });
 
-      if (ambulanceMarker) {
-        ambulanceMarker.setLatLng([unit.lat, unit.lng]);
-      } else {
-        ambulanceMarker = L.marker([unit.lat, unit.lng]).addTo(map)
-          .bindPopup(`<b>${unit.unitId}</b><br/>En Route`);
+    // 2. Listen for individual driver location updates
+    socket.on('location_changed', (unit) => {
+      updateAmbulanceMarker(unit);
+      
+      // If this unit is assigned to the current patient request, update status card
+      if (document.getElementById('assigned-unit').innerText === unit.unitId || 
+          document.getElementById('assigned-unit').innerText === 'Searching...') {
+        document.getElementById('assigned-unit').innerText = unit.unitId;
+        document.getElementById('unit-status').innerText = unit.status || 'En Route';
       }
     });
+
+    // 3. Listen for driver disconnects or offline state
+    socket.on('unit_offline', (unitId) => {
+      if (ambulanceMarkers[unitId]) {
+        map.removeLayer(ambulanceMarkers[unitId]);
+        delete ambulanceMarkers[unitId];
+        updateUnitCounter();
+      }
+    });
+
+    // Helper to add or move driver markers on map
+    function updateAmbulanceMarker(unit) {
+      const { unitId, lat, lng, driverName, status } = unit;
+
+      if (ambulanceMarkers[unitId]) {
+        ambulanceMarkers[unitId].setLatLng([lat, lng]);
+        ambulanceMarkers[unitId].getPopup().setContent(`<b>Ambulance: ${unitId}</b><br/>Driver: ${driverName || 'Active'}<br/>Status: ${status || 'Available'}`);
+      } else {
+        ambulanceMarkers[unitId] = L.marker([lat, lng], { icon: ambulanceIcon })
+          .addTo(map)
+          .bindPopup(`<b>Ambulance: ${unitId}</b><br/>Driver: ${driverName || 'Active'}<br/>Status: ${status || 'Available'}`);
+      }
+      updateUnitCounter();
+    }
+
+    // Helper to update active driver count
+    function updateUnitCounter() {
+      const count = Object.keys(ambulanceMarkers).length;
+      document.getElementById('available-count').innerText = `${count} Active Unit${count !== 1 ? 's' : ''}`;
+    }
   </script>
 </body>
 </html>
